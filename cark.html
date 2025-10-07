@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Çark Çekiliş - Spinner</title>
+  <style>
+    :root{--bg:#0f1724;--card:#0b1220;--muted:#9aa4b2;--accent:#7c3aed}
+    *{box-sizing:border-box;font-family:Inter,Segoe UI,Roboto,Arial,sans-serif}
+    body{margin:0;min-height:100vh;background:linear-gradient(180deg,#071024 0%,#071221 100%);color:#e6eef6;display:flex;align-items:center;justify-content:center;padding:24px}
+    .app{width:100%;max-width:1100px;background:linear-gradient(180deg,rgba(255,255,255,0.02),rgba(255,255,255,0.01));border-radius:12px;padding:18px;display:grid;grid-template-columns:520px 1fr;gap:18px;box-shadow:0 6px 30px rgba(2,6,23,0.7)}
+    .card{background:transparent;padding:10px;border-radius:8px}
+
+    /* Left: wheel */
+    .wheel-wrap{display:flex;flex-direction:column;align-items:center;gap:10px}
+    canvas{background:linear-gradient(180deg,#081124,#06101a);border-radius:50%;box-shadow:inset 0 -6px 20px rgba(0,0,0,0.6), 0 8px 30px rgba(2,6,23,0.6)}
+    .controls{display:flex;gap:8px;margin-top:8px}
+    button{background:var(--accent);border:0;padding:10px 14px;border-radius:8px;color:white;font-weight:600;cursor:pointer}
+    button.alt{background:#1f2937}
+
+    /* Right: editor */
+    .panel{display:flex;flex-direction:column;gap:12px}
+    .form-row{display:flex;gap:8px}
+    input[type=text]{flex:1;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.06);background:rgba(255,255,255,0.02);color:inherit}
+    input[type=color]{width:56px;height:44px;padding:0;border-radius:8px;border:0;background:#fff}
+    .list{background:rgba(255,255,255,0.02);padding:10px;border-radius:8px;max-height:320px;overflow:auto}
+    .item{display:flex;align-items:center;justify-content:space-between;padding:8px;border-radius:6px;background:linear-gradient(180deg,rgba(255,255,255,0.01),transparent);margin-bottom:8px}
+    .item .left{display:flex;align-items:center;gap:8px}
+    .color-dot{width:28px;height:28px;border-radius:50%;box-shadow:0 2px 6px rgba(0,0,0,0.6)}
+    .small{font-size:13px;color:var(--muted)}
+    .actions button{padding:6px 8px;border-radius:6px;background:transparent;border:1px solid rgba(255,255,255,0.04);color:var(--muted);cursor:pointer}
+
+    .result{padding:12px;border-radius:8px;background:linear-gradient(180deg,rgba(255,255,255,0.01),transparent);text-align:center;font-weight:700}
+    .row-between{display:flex;justify-content:space-between;align-items:center}
+
+    @media (max-width:1000px){.app{grid-template-columns:1fr;max-width:760px}}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="card wheel-wrap">
+      <canvas id="wheel" width="520" height="520"></canvas>
+      <div class="controls">
+        <button id="spinBtn">Çevir</button>
+        <button id="stopBtn" class="alt">Hızlı Durdur</button>
+        <button id="resetBtn" class="alt">Sıfırla</button>
+      </div>
+      <div style="width:520px;display:flex;justify-content:center;gap:12px;margin-top:8px;align-items:center">
+        <div class="small">Kayıtlı öğe sayısı: <span id="count">0</span></div>
+        <div class="small">Sonuç: <strong id="lastResult">-</strong></div>
+      </div>
+    </div>
+
+    <div class="card panel">
+      <div class="row-between">
+        <h3 style="margin:0">Çark Öğeleri</h3>
+        <div class="small">Otomatik kaydedilir</div>
+      </div>
+
+      <div class="form-row">
+        <input id="nameInput" type="text" placeholder="Madde adı (örn: Hediye A)" />
+        <input id="colorInput" type="color" value="#ff6b6b" />
+        <button id="addBtn">Ekle</button>
+      </div>
+
+      <div class="list" id="itemsList"></div>
+
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button id="exportBtn" class="alt">Dışa Aktar (JSON)</button>
+        <button id="importBtn" class="alt">İçe Aktar (JSON)</button>
+        <button id="randomizeBtn" class="alt">Renkleri Karıştır</button>
+      </div>
+
+      <div class="result" style="margin-top:8px">
+        <div class="small">Açıklama:</div>
+        Bu sayfada dilediğiniz kadar madde ekleyip çarkı döndürebilirsiniz. Sonucu görsel ve yazıyla alırsınız.
+      </div>
+    </div>
+  </div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('wheel');
+  const ctx = canvas.getContext('2d');
+  const spinBtn = document.getElementById('spinBtn');
+  const stopBtn = document.getElementById('stopBtn');
+  const resetBtn = document.getElementById('resetBtn');
+  const addBtn = document.getElementById('addBtn');
+  const exportBtn = document.getElementById('exportBtn');
+  const importBtn = document.getElementById('importBtn');
+  const randomizeBtn = document.getElementById('randomizeBtn');
+  const nameInput = document.getElementById('nameInput');
+  const colorInput = document.getElementById('colorInput');
+  const itemsList = document.getElementById('itemsList');
+  const countEl = document.getElementById('count');
+  const lastResult = document.getElementById('lastResult');
+
+  const STORAGE_KEY = 'wheel_items_v1';
+  let items = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null') || [
+    {label:'Hediye A', color:'#ff6b6b'},
+    {label:'Hediye B', color:'#ffd166'},
+    {label:'Hediye C', color:'#6bcB77'}
+  ];
+
+  // wheel state
+  let rotation = 0; // current rotation in radians
+  let isSpinning = false;
+  let animId = null;
+
+  function save(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(items)); }
+
+  function renderList(){
+    itemsList.innerHTML = '';
+    items.forEach((it, idx) => {
+      const el = document.createElement('div'); el.className='item';
+      el.innerHTML = `<div class="left"><div class="color-dot" style="background:${it.color}"></div><div><div>${it.label}</div><div class="small">#${idx+1}</div></div></div><div class="actions"><button data-idx="${idx}" class="del">Sil</button></div>`;
+      itemsList.appendChild(el);
+    });
+    itemsList.querySelectorAll('.del').forEach(btn => btn.addEventListener('click', e => {
+      const i = +e.currentTarget.dataset.idx; items.splice(i,1); save(); update();
+    }));
+  }
+
+  function update(){
+    countEl.textContent = items.length;
+    renderList();
+    draw();
+  }
+
+  function draw(){
+    const w = canvas.width, h = canvas.height, cx = w/2, cy = h/2, r = Math.min(w,h)/2 - 8;
+    ctx.clearRect(0,0,w,h);
+    if(items.length === 0){
+      // empty message
+      ctx.fillStyle = 'rgba(255,255,255,0.06)'; ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.textAlign='center'; ctx.font='18px sans-serif'; ctx.fillText('Öğe yok — sol taraftan ekleyin',cx,cy);
+      return;
+    }
+    const slice = Math.PI*2 / items.length;
+    // draw slices
+    for(let i=0;i<items.length;i++){
+      const start = rotation + i*slice;
+      const end = start + slice;
+      ctx.beginPath(); ctx.moveTo(cx,cy);
+      ctx.arc(cx,cy,r,start,end);
+      ctx.closePath();
+      ctx.fillStyle = items[i].color;
+      ctx.fill();
+
+      // label
+      ctx.save();
+      ctx.translate(cx,cy);
+      const mid = start + slice/2;
+      ctx.rotate(mid);
+      ctx.textAlign = 'right';
+      ctx.fillStyle = '#061018';
+      ctx.font = 'bold 16px sans-serif';
+      // draw a slightly translucent label background
+      ctx.fillRect(r*0.32 * -1 - 10, -14, r*0.6 + 10, 28);
+      ctx.fillStyle = '#f7f9fb';
+      ctx.fillText(items[i].label, r*0.5, 6);
+      ctx.restore();
+    }
+
+    // center circle
+    ctx.beginPath(); ctx.arc(cx,cy,r*0.16,0,Math.PI*2); ctx.fillStyle='rgba(0,0,0,0.25)'; ctx.fill();
+
+    // pointer
+    ctx.fillStyle = '#fffb'; ctx.beginPath(); ctx.moveTo(cx,cy - r - 8); ctx.lineTo(cx - 18, cy - r + 28); ctx.lineTo(cx + 18, cy - r + 28); ctx.closePath(); ctx.fill();
+    // stroke pointer
+    ctx.strokeStyle='rgba(0,0,0,0.6)'; ctx.lineWidth=2; ctx.stroke();
+  }
+
+  // easing
+  function easeOutCubic(t){ return 1 - Math.pow(1 - t, 3); }
+
+  function spin(){
+    if(isSpinning || items.length === 0) return;
+    isSpinning = true; spinBtn.disabled=true; stopBtn.disabled=false;
+    // pick a random target index
+    const targetIndex = Math.floor(Math.random() * items.length);
+    const slice = Math.PI*2 / items.length;
+    // compute target rotation so that the chosen slice's middle lands at pointer (which is at -90deg / -PI/2)
+    const desiredMidAngle = (3*Math.PI/2); // pointer pointing up (canvas coordinates): we want slice mid to align with this angle
+    const sliceMid = targetIndex*slice + slice/2;
+    // current rotation is 'rotation' which rotates the wheel; compute delta to bring sliceMid to desiredMidAngle
+    // targetRotation = rotation + (desiredMidAngle - sliceMid) + fullRotations
+    const fullRot = (Math.floor(Math.random()*3)+5) * 2*Math.PI; // 5-7 full spins
+    const targetRotation = rotation + (desiredMidAngle - sliceMid) + fullRot;
+    const duration = 4200 + Math.random()*800; // ms
+    const start = performance.now();
+    const from = rotation;
+
+    function frame(now){
+      const t = Math.min(1, (now - start)/duration);
+      const eased = easeOutCubic(t);
+      rotation = from + (targetRotation - from) * eased;
+      draw();
+      if(t < 1 && isSpinning) animId = requestAnimationFrame(frame);
+      else{
+        isSpinning = false; spinBtn.disabled=false; stopBtn.disabled=true;
+        rotation = ((rotation % (2*Math.PI)) + 2*Math.PI) % (2*Math.PI); // normalize
+        // determine winner index from final rotation
+        const finalSlice = Math.PI*2 / items.length;
+        // which slice's mid is closest to pointer angle (3pi/2)
+        let winner = Math.floor(((3*Math.PI/2 - rotation) % (2*Math.PI)) / finalSlice);
+        // normalize
+        winner = ((winner % items.length) + items.length) % items.length;
+        lastResult.textContent = items[winner].label;
+        // small pop animation
+        flashWinner(items[winner]);
+      }
+    }
+    animId = requestAnimationFrame(frame);
+  }
+
+  function flashWinner(item){
+    // quick flash on center
+    const original = ctx.globalCompositeOperation;
+    const w = canvas.width, h = canvas.height, cx=w/2, cy=h/2, r=Math.min(w,h)/2 - 8;
+    let step=0;
+    const max=20;
+    function f(){
+      step++;
+      draw();
+      ctx.save(); ctx.globalAlpha = 0.12 + 0.02*step; ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.fillStyle = item.color; ctx.fill(); ctx.restore();
+      if(step<max) requestAnimationFrame(f);
+    }
+    f();
+  }
+
+  // quick stop: jump to a slow stop
+  function quickStop(){
+    if(!isSpinning) return;
+    cancelAnimationFrame(animId);
+    // reduce to a near stop with a small ease
+    const from = rotation; const extra = Math.random()*Math.PI*2 + Math.PI*2; const target = from + extra; const dur = 900;
+    const start = performance.now();
+    function frame(now){
+      const t = Math.min(1,(now-start)/dur); const eased = easeOutCubic(t);
+      rotation = from + (target - from) * eased; draw();
+      if(t<1) requestAnimationFrame(frame);
+      else{ isSpinning=false; spinBtn.disabled=false; stopBtn.disabled=true; rotation = ((rotation % (2*Math.PI)) + 2*Math.PI) % (2*Math.PI);
+        // compute winner
+        const finalSlice = Math.PI*2 / items.length;
+        let winner = Math.floor(((3*Math.PI/2 - rotation) % (2*Math.PI)) / finalSlice);
+        winner = ((winner % items.length) + items.length) % items.length;
+        lastResult.textContent = items[winner].label;
+      }
+    }
+    requestAnimationFrame(frame);
+  }
+
+  // UI handlers
+  addBtn.addEventListener('click', ()=>{
+    const name = nameInput.value.trim(); const color = colorInput.value;
+    if(!name) return alert('Lütfen madde adı girin');
+    items.push({label:name, color}); save(); nameInput.value=''; update();
+  });
+
+  spinBtn.addEventListener('click', spin);
+  stopBtn.addEventListener('click', quickStop); stopBtn.disabled = true;
+  resetBtn.addEventListener('click', ()=>{
+    if(!confirm('Tüm maddeleri silmek istiyor musunuz?')) return; items = []; save(); update(); lastResult.textContent='-';
+  });
+
+  exportBtn.addEventListener('click', ()=>{
+    const data = JSON.stringify(items, null, 2);
+    const blob = new Blob([data], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'wheel_items.json'; a.click(); URL.revokeObjectURL(url);
+  });
+
+  importBtn.addEventListener('click', ()=>{
+    const text = prompt('JSON verisini buraya yapıştırın (veya iptal ile vazgeçin)');
+    if(!text) return;
+    try{ const parsed = JSON.parse(text); if(!Array.isArray(parsed)) throw new Error('Dizi değil');
+      // validate
+      const clean = parsed.map(p => ({label: String(p.label || p.name || 'Unnamed'), color: p.color || '#cccccc'}));
+      items = clean; save(); update();
+    }catch(e){ alert('Geçersiz JSON: '+e.message); }
+  });
+
+  randomizeBtn.addEventListener('click', ()=>{
+    // shuffle colors
+    for(let i=items.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [items[i].color,items[j].color] = [items[j].color,items[i].color]; }
+    save(); update();
+  });
+
+  // allow double-click on list item to edit name
+  itemsList.addEventListener('dblclick', e => {
+    const el = e.target.closest('.item'); if(!el) return; const idx = [...itemsList.children].indexOf(el);
+    const newName = prompt('Yeni isim:', items[idx].label); if(newName==null) return; items[idx].label = newName.trim() || items[idx].label; save(); update();
+  });
+
+  // resize canvas for high-dpi
+  function fixDPI(){
+    const ratio = window.devicePixelRatio || 1;
+    const size = 520; canvas.width = size * ratio; canvas.height = size * ratio; canvas.style.width = size+'px'; canvas.style.height = size+'px'; ctx.setTransform(ratio,0,0,ratio,0,0);
+  }
+  fixDPI(); window.addEventListener('resize', () => { fixDPI(); draw(); });
+
+  update();
+})();
+</script>
+</body>
+</html>
